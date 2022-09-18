@@ -1,6 +1,5 @@
 from itertools import accumulate
-from modulefinder import EXTENDED_ARG
-from opcode import HAVE_ARGUMENT, cmp_op, opmap, stack_effect
+from opcode import EXTENDED_ARG, HAVE_ARGUMENT, cmp_op, opmap, stack_effect
 
 BINARY_ADD = opmap["BINARY_ADD"]
 BUILD_TUPLE = opmap["BUILD_TUPLE"]
