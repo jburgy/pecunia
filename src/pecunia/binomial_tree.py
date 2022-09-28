@@ -13,7 +13,7 @@ def present_value(
 ):
     dt = years_to_expiration / steps
     z = np.exp(-rate_of_return * dt)
-    u = np.exp(volatility * np.sqrt(dt))
+    u = max(np.exp(volatility * np.sqrt(dt)), 1 / z)
     d = 1 / u
     p = (1 / z - d) / (u - d)
     q = 1 - p
