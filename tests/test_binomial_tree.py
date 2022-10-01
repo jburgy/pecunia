@@ -31,9 +31,10 @@ for volatility in np.arange(0.0, 0.5, 0.1):
     )
 
 
+@pytest.mark.parametrize("implementation", ["ast", "bytecode"])
 @pytest.mark.parametrize("contract,volatility,expected", testdata)
-def test_binomial_tree(contract, volatility, expected):
-    evolution = generate.from_graph(contract)
+def test_binomial_tree(implementation, contract, volatility, expected):
+    evolution = generate.from_graph(contract, implementation=implementation)
     present_value = binomial_tree.present_value(
         evolution,
         years_to_expiration=1.0,

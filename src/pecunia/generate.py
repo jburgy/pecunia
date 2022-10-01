@@ -1,6 +1,7 @@
+import ast
 from collections import defaultdict
 from collections.abc import Callable, Generator
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 
 import numpy as np
 
@@ -12,7 +13,9 @@ EvolutionStep = Generator[Vector, Optional[tuple[float, Vector, Vector]], None]
 Evolution = Callable[[float, Vector, Vector], EvolutionStep]
 
 
-def from_graph(val: Union[At, Timed]) -> Evolution:
+def from_graph(
+    val: Union[At, Timed], implementation: Literal["ast", "bytecode"] = "ast"
+) -> Evolution:
     m: defaultdict[float, list] = defaultdict(list)
     m[0.0]
 
@@ -29,6 +32,10 @@ def from_graph(val: Union[At, Timed]) -> Evolution:
         except TypeError:
             pass
 
+    return {"ast": _ast, "bytecode": _bytecode}[implementation](m)
+
+
+def _bytecode(m: defaultdict[float, list]) -> Evolution:
     consts = {None: 0, np.maximum: 1}
     names = {"t": 0, "x": 1, "v": 2}
     b = CodeBuilder(names, consts)
@@ -66,3 +73,67 @@ def from_graph(val: Union[At, Timed]) -> Evolution:
         t, x, v = yield v
 
     return b.replace(evolve)
+
+
+def _ast(m: defaultdict[float, list]):
+    communicate = ast.Assign(
+        targets=[
+            ast.Tuple(
+                elts=[
+                    ast.Name(id="t", ctx=ast.Store()),
+                    ast.Name(id="x", ctx=ast.Store()),
+                    ast.Name(id="v", ctx=ast.Store()),
+                ],
+                ctx=ast.Store(),
+            ),
+        ],
+        value=ast.Yield(value=ast.Name(id="v", ctx=ast.Load())),
+    )
+
+    body: list[ast.AST] = []
+    for time, nodes in sorted(m.items(), reverse=True):
+        body.append(
+            ast.While(
+                test=ast.Compare(
+                    left=ast.Name(id="t", ctx=ast.Load()),
+                    ops=[ast.Gt()],
+                    comparators=[ast.Constant(value=time)],
+                ),
+                body=[communicate],
+                orelse=[],
+            )
+        )
+        if nodes:
+            body.append(
+                ast.Assign(
+                    targets=[ast.Name(id="v", ctx=ast.Store())],
+                    value=nodes[0].expr,
+                    type_ignores=[],
+                )
+            )
+            body.append(communicate)
+
+    body.append(ast.Expr(value=ast.Yield(value=ast.Name(id="v", ctx=ast.Load()))))
+
+    evolve = ast.fix_missing_locations(
+        ast.FunctionDef(
+            name="evolve",
+            args=ast.arguments(
+                posonlyargs=[],
+                args=[
+                    ast.arg(arg="t"),
+                    ast.arg(arg="x"),
+                    ast.arg(arg="v"),
+                ],
+                kwonlyargs=[],
+                kw_defaults=[],
+                defaults=[],
+            ),
+            body=body,
+            decorator_list=[],
+            lineno=1,
+        )
+    )
+    g = {"np": np}
+    exec(ast.unparse(evolve), g)
+    return g["evolve"]
