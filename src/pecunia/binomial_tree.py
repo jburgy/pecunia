@@ -20,12 +20,12 @@ def present_value(
 
     x = spot * np.geomspace(d**steps, u**steps, steps + 1)
     g = evolve(years_to_expiration, x, x * 0.0)
-    v = g.send(None)
+    (v,) = g.send(None)
 
     times = np.linspace(years_to_expiration, 0, steps + 1)
     for time in times[1:]:
         x = u * x[:-1]
         v = z * (p * v[1:] + q * v[:-1])
-        v = g.send((time, x, v))
+        (v,) = g.send((time, x, v))
 
     return v[0]

@@ -14,8 +14,7 @@ class At:
     def __call__(b: CodeBuilder) -> None:
         b.load_fast("x")
 
-    @cached_property
-    def expr(self):
+    def expr(self, names):
         return ast.Name(id="x", ctx=ast.Load())
 
 
@@ -39,14 +38,23 @@ class And(Timed):
     def __call__(b: CodeBuilder):
         b.binary_add()
 
-    @cached_property
-    def expr(self):
-        return ast.Call(
+    def expr(self, names):
+        value = ast.Call(
             func=ast.Attribute(
                 value=ast.Name(id="np", ctx=ast.Load()), attr="add", ctx=ast.Load()
             ),
-            args=[getattr(arg, "expr", ast.Constant(value=arg)) for arg in self],
+            args=[
+                arg.expr(names) if hasattr(arg, "expr") else ast.Constant(value=arg)
+                for arg in self
+            ],
             keywords=[],
+        )
+        return (
+            value
+            if (name := names.get(self)) is None
+            else ast.NamedExpr(
+                target=ast.Name(id=name, ctx=ast.Store()), value=value, type_ignores=[]
+            )
         )
 
 
@@ -58,12 +66,21 @@ class Or(Timed):
         b.swap()
         b.call_function_ex()
 
-    @cached_property
-    def expr(self):
-        return ast.Call(
+    def expr(self, names):
+        value = ast.Call(
             func=ast.Attribute(
                 value=ast.Name(id="np", ctx=ast.Load()), attr="maximum", ctx=ast.Load()
             ),
-            args=[getattr(arg, "expr", ast.Constant(value=arg)) for arg in self],
+            args=[
+                arg.expr(names) if hasattr(arg, "expr") else ast.Constant(value=arg)
+                for arg in self
+            ],
             keywords=[],
+        )
+        return (
+            value
+            if (name := names.get(self)) is None
+            else ast.NamedExpr(
+                target=ast.Name(id=name, ctx=ast.Store()), value=value, type_ignores=[]
+            )
         )

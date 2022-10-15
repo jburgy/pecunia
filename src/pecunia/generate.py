@@ -45,9 +45,10 @@ def _bytecode(m: defaultdict[float, list]) -> Evolution:
         b.load_const(time)
         b.compare_op(">")
         # anticipate EXTENDED_ARG for start_while
-        offset = start_while.bit_length() // 8 + 8
+        offset = start_while.bit_length() // 8 + 9
         b.pop_jump_if_false(len(b) + offset * 2)
         b.load_fast("v")
+        b.build_tuple(1)
         b.yield_value()
         b.unpack_sequence(3)
         b.store_fast("t")
@@ -60,6 +61,7 @@ def _bytecode(m: defaultdict[float, list]) -> Evolution:
             else:
                 b.load_const(node)
         if nodes:
+            b.build_tuple(1)
             b.yield_value()
             b.unpack_sequence(3)
             b.store_fast("t")
@@ -67,6 +69,7 @@ def _bytecode(m: defaultdict[float, list]) -> Evolution:
             b.store_fast("v")
 
     b.load_fast("v")
+    b.build_tuple(1)
     b.yield_value()
 
     def evolve(t, x, v):
@@ -75,22 +78,30 @@ def _bytecode(m: defaultdict[float, list]) -> Evolution:
     return b.replace(evolve)
 
 
-def _ast(m: defaultdict[float, list]):
-    communicate = ast.Assign(
+def _communicate(store: list[str], load: list[str]):
+    return ast.Assign(
         targets=[
             ast.Tuple(
                 elts=[
                     ast.Name(id="t", ctx=ast.Store()),
                     ast.Name(id="x", ctx=ast.Store()),
-                    ast.Name(id="v", ctx=ast.Store()),
+                    *(ast.Name(id=name, ctx=ast.Store()) for name in store),
                 ],
                 ctx=ast.Store(),
             ),
         ],
-        value=ast.Yield(value=ast.Name(id="v", ctx=ast.Load())),
+        value=ast.Yield(
+            value=ast.Tuple(
+                elts=[ast.Name(id=name, ctx=ast.Load()) for name in load],
+                ctx=ast.Store(),
+            )
+        ),
     )
 
+
+def _ast(m: defaultdict[float, list]):
     body: list[ast.AST] = []
+    names: dict[Union[At, Timed], str] = {}
     for time, nodes in sorted(m.items(), reverse=True):
         body.append(
             ast.While(
@@ -99,7 +110,7 @@ def _ast(m: defaultdict[float, list]):
                     ops=[ast.Gt()],
                     comparators=[ast.Constant(value=time)],
                 ),
-                body=[communicate],
+                body=[_communicate(["v"], ["v"])],
                 orelse=[],
             )
         )
@@ -107,13 +118,18 @@ def _ast(m: defaultdict[float, list]):
             body.append(
                 ast.Assign(
                     targets=[ast.Name(id="v", ctx=ast.Store())],
-                    value=nodes[0].expr,
-                    type_ignores=[],
+                    value=nodes[0].expr(names),
                 )
             )
-            body.append(communicate)
+            body.append(_communicate(["v"], ["v"]))
 
-    body.append(ast.Expr(value=ast.Yield(value=ast.Name(id="v", ctx=ast.Load()))))
+    body.append(
+        ast.Expr(
+            value=ast.Yield(
+                value=ast.Tuple(elts=[ast.Name(id="v", ctx=ast.Load())], ctx=ast.Load())
+            )
+        )
+    )
 
     evolve = ast.fix_missing_locations(
         ast.FunctionDef(
