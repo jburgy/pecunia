@@ -1,6 +1,7 @@
 import ast
 from collections import defaultdict
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, ValuesView
+from itertools import chain
 from typing import Literal, Optional, Union
 
 import numpy as np
@@ -8,13 +9,14 @@ import numpy as np
 from .atoms import At, Timed
 from .code_builder import CodeBuilder
 
+Value = Union[At, Timed]
 Vector = np.ndarray[tuple[int], np.dtype[np.float64]]
 EvolutionStep = Generator[Vector, Optional[tuple[float, Vector, Vector]], None]
 Evolution = Callable[[float, Vector, Vector], EvolutionStep]
 
 
 def from_graph(
-    val: Union[At, Timed], implementation: Literal["ast", "bytecode"] = "ast"
+    val: Value, implementation: Literal["ast", "bytecode"] = "ast"
 ) -> Evolution:
     m: defaultdict[float, list] = defaultdict(list)
     m[0.0]
@@ -32,10 +34,10 @@ def from_graph(
         except TypeError:
             pass
 
-    return {"ast": _ast, "bytecode": _bytecode}[implementation](m)
+    return {"ast": _ast, "bytecode": _bytecode}[implementation](val, m)
 
 
-def _bytecode(m: defaultdict[float, list]) -> Evolution:
+def _bytecode(val: Value, m: defaultdict[float, list]) -> Evolution:
     consts = {None: 0, np.maximum: 1}
     names = {"t": 0, "x": 1, "v": 2}
     b = CodeBuilder(names, consts)
@@ -78,28 +80,46 @@ def _bytecode(m: defaultdict[float, list]) -> Evolution:
     return b.replace(evolve)
 
 
-def _communicate(store: list[str], load: list[str]):
+def _analyze(m: defaultdict[float, list]):
+    earliest = {}
+    for time, nodes in sorted(m.items(), reverse=True):
+        for node in nodes:
+            try:
+                for arg in node:
+                    if hasattr(arg, "time"):
+                        earliest[arg] = time
+            except TypeError:
+                pass
+    return earliest
+
+
+def _communicate(names: ValuesView[str]):
+    store = ast.Store()
+    load = ast.Load()
     return ast.Assign(
         targets=[
             ast.Tuple(
                 elts=[
-                    ast.Name(id="t", ctx=ast.Store()),
-                    ast.Name(id="x", ctx=ast.Store()),
-                    *(ast.Name(id=name, ctx=ast.Store()) for name in store),
+                    ast.Name(id="t", ctx=store),
+                    ast.Name(id="x", ctx=store),
+                    *(ast.Name(id=name, ctx=store) for name in names),
                 ],
-                ctx=ast.Store(),
+                ctx=store,
             ),
         ],
         value=ast.Yield(
             value=ast.Tuple(
-                elts=[ast.Name(id=name, ctx=ast.Load()) for name in load],
-                ctx=ast.Store(),
+                elts=[ast.Name(id=name, ctx=load) for name in names],
+                ctx=load,
             )
         ),
     )
 
 
-def _ast(m: defaultdict[float, list]):
+def _ast(val: Value, m: defaultdict[float, list]):
+    earliest = _analyze(m)
+    earliest[val] = 0.0
+
     body: list[ast.AST] = []
     names: dict[Union[At, Timed], str] = {}
     for time, nodes in sorted(m.items(), reverse=True):
@@ -110,23 +130,26 @@ def _ast(m: defaultdict[float, list]):
                     ops=[ast.Gt()],
                     comparators=[ast.Constant(value=time)],
                 ),
-                body=[_communicate(["v"], ["v"])],
+                body=[_communicate(names.values())],
                 orelse=[],
             )
         )
         if nodes:
-            body.append(
-                ast.Assign(
-                    targets=[ast.Name(id="v", ctx=ast.Store())],
-                    value=nodes[0].expr(names),
-                )
-            )
-            body.append(_communicate(["v"], ["v"]))
+            temp = chain(names, nodes)
+            names = {}
+            for node in temp:
+                until = earliest.get(node)
+                if until is not None and until < time:
+                    names.setdefault(node, f"v{len(names)}")
+            body.append(ast.Expr(value=nodes[0].expr(names)))
+            body.append(_communicate(names.values()))
 
     body.append(
         ast.Expr(
             value=ast.Yield(
-                value=ast.Tuple(elts=[ast.Name(id="v", ctx=ast.Load())], ctx=ast.Load())
+                value=ast.Tuple(
+                    elts=[ast.Name(id=names[val], ctx=ast.Load())], ctx=ast.Load()
+                )
             )
         )
     )
