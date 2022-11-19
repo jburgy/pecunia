@@ -154,25 +154,28 @@ def _ast(val: Value, m: defaultdict[float, list]):
         )
     )
 
-    evolve = ast.fix_missing_locations(
-        ast.FunctionDef(
-            name="evolve",
-            args=ast.arguments(
-                posonlyargs=[],
-                args=[
-                    ast.arg(arg="t"),
-                    ast.arg(arg="x"),
-                    ast.arg(arg="v"),
-                ],
-                kwonlyargs=[],
-                kw_defaults=[],
-                defaults=[],
-            ),
-            body=body,
-            decorator_list=[],
-            lineno=1,
-        )
+    evolve = ast.FunctionDef(
+        name="evolve",
+        args=ast.arguments(
+            posonlyargs=[],
+            args=[
+                ast.arg(arg="t"),
+                ast.arg(arg="x"),
+                ast.arg(arg="v"),
+            ],
+            kwonlyargs=[],
+            kw_defaults=[],
+            defaults=[],
+        ),
+        body=body,
+        decorator_list=[],
     )
-    g = {"np": np}
-    exec(ast.unparse(evolve), g)
-    return g["evolve"]
+    source = (
+        ast.unparse(ast.fix_missing_locations(evolve))
+        if __debug__
+        else ast.fix_missing_locations(ast.Module(body=[evolve], type_ignores=[]))
+    )
+    code = compile(source, filename="<string>", mode="exec")
+    locals = {"np": np}
+    exec(code, None, locals)
+    return locals["evolve"]
